@@ -56,9 +56,6 @@ fn main() -> Result<()> {
         );
     }
 
-    // println!("test: {:x?}", usizeify(b"\x00\x60\x00\x00", Endian::BigEndian));
-    println!("test: 0x{:08x?}", usizeify(b"\x10\x0a\x10\x00", Endian::BigEndian));
-
     Ok(())
 }
 
@@ -81,39 +78,27 @@ impl IFDEntry {
 
         let field_type_hex = take_bytes(ifd_bytes, &mut ifd_advance, 2);
         let field_type = usizeify(field_type_hex, byte_order);
+        let field_type_enum = EntryType::from_usize(field_type);
 
+        // NOTE(Chris): Count is not the total number of bytes, but rather the number of values
+        // (the length of which is specified by the field type)
         let count = usizeify(take_bytes(ifd_bytes, &mut ifd_advance, 4), byte_order);
 
-        // FIXME(Chris): Correctly read in the byte order on big-endian TIFF data
-        let value_offset = usizeify(
-            // match byte_order {
-            //     Endian::LittleEndian => {
-            //         if count <= 4 {
-            //             &take_bytes(ifd_bytes, &mut ifd_advance, 4)[..count]
-            //         } else {
-            //             &take_bytes(ifd_bytes, &mut ifd_advance, 4)
-            //         }
-            //     }
-            //     Endian::BigEndian => {
-            //         if count <= 4 {
-            //             &take_bytes(ifd_bytes, &mut ifd_advance, 4)[count..]
-            //         } else {
-            //             &take_bytes(ifd_bytes, &mut ifd_advance, 4)
-            //         }
-            //     }
-            // },
+        let byte_count = if let EntryType::Short = field_type_enum {
+            count * field_type_enum.byte_count()
+        } else {
+            4
+        };
+
+        let value_offset = usizeify_n(
             &take_bytes(ifd_bytes, &mut ifd_advance, 4),
             byte_order,
-            // if count <= 4 {
-            //     count
-            // } else {
-            //     4
-            // },
+            byte_count,
         );
 
         IFDEntry {
             tag: EntryTag::from_usize(entry_tag),
-            field_type: EntryType::from_usize(field_type),
+            field_type: field_type_enum,
             count: count as u32,
             value_offset: value_offset as u32,
         }
@@ -135,7 +120,7 @@ impl EntryTag {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone,Copy)]
 enum EntryType {
     Short = 3,
     Unimplemented,
@@ -146,6 +131,13 @@ impl EntryType {
         match value {
             3 => EntryType::Short,
             _ => EntryType::Unimplemented,
+        }
+    }
+
+    fn byte_count(self) -> usize {
+        match self {
+            EntryType::Short => 2,
+            _ => panic!("byte count not defined for {:?}", self),
         }
     }
 }
@@ -193,8 +185,8 @@ fn usizeify_n(bytes: &[u8], byte_order: Endian, n: usize) -> usize {
             }),
         Endian::BigEndian => bytes
             .iter()
-            .rev()
             .take(n)
+            .rev()
             .enumerate()
             .fold(0usize, |sum, (index, byte)| {
                 sum + ((*byte as usize) << (index * 8))
@@ -254,5 +246,12 @@ mod test {
             usizeify(b"\x78\x56\x34\x12", Endian::LittleEndian),
             305419896
         );
+
+        assert_eq!(usizeify(b"\x00\x06", Endian::BigEndian), 6);
+    }
+
+    #[test]
+    fn test_usizeify_n() {
+        assert_eq!(usizeify_n(b"\x00\x06\x00\x00", Endian::BigEndian, 2), 6);
     }
 }
